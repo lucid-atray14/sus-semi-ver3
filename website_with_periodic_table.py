@@ -270,7 +270,7 @@ def main():
     # Add footer
     st.markdown("""
     <div class="footer">
-        Semiconductor Database © 2025 | v2.0 | Developed by HERAWS
+        Semiconductor Database © 2025 | v3.0 | Developed by HERAWS
     </div>
     """, unsafe_allow_html=True)
 
@@ -1108,4 +1108,5 @@ def main():
                     )
 
 if __name__ == "__main__":
+
     main()
