@@ -4,15 +4,9 @@ from bokeh.models import ColumnDataSource, HoverTool, LabelSet
 import streamlit as st
 import numpy as np
 from pymcdm.methods import PROMETHEE_II
-from pymcdm.helpers import rankdata
 from pymcdm.methods import TOPSIS
-from pymcdm.weights import entropy_weights
 from io import BytesIO
-from bokeh.palettes import Category10
-from bokeh.models import NumeralTickFormatter
-from bokeh.models import LogScale, Range1d, LinearScale
-from scipy.stats import ks_2samp
-from bokeh.transform import jitter, factor_cmap
+from bokeh.transform import jitter
 from streamlit_bokeh import streamlit_bokeh
 import os
 
@@ -62,11 +56,6 @@ def filter_dataframe(df, filters, selected_names=None):
         filtered = filtered[filtered["Name"].isin(selected_names)]
     
     return filtered
-
-def calculate_weights(matrix, method="entropy"):
-    if method == "entropy":
-        return entropy_weights(matrix)
-    return None
 
 def run_topsis(matrix, weights, criteria_types):
     topsis = TOPSIS()
@@ -753,7 +742,7 @@ def main():
                 # Weight assignment
                 if weighting_method == "Entropy Weighting":
                     # Check if we have enough samples for entropy weighting
-                    if len(df_filtered) < 30:
+                    if len(df_filtered) < 20:
                         st.warning(f"⚠️ Warning: Only {len(df_filtered)} materials available. Entropy weighting works best with 30+ samples. Consider using Manual Weights instead.")
                     
                     try:
@@ -766,46 +755,48 @@ def main():
                             st.error(f"❌ Cannot calculate entropy weights: {nan_count} missing values found in criteria columns.")
                             st.info("💡 Tip: Use Manual Weights instead, or filter out materials with missing values.")
                             weights = None
+                        
+                        # Check for negative values (entropy requires non-negative data)
+                        elif np.any(matrix_for_entropy < 0):
+                            st.error("❌ Cannot calculate entropy weights: Negative values found in criteria columns.")
+                            st.info("💡 Entropy weighting requires non-negative values. Consider data transformation or use Manual Weights.")
+                            weights = None
+                        
                         else:
-                            # PRE-NORMALIZATION: Normalize the matrix before entropy calculation
-                            # Using min-max normalization for each criterion
-                            normalized_matrix = np.zeros_like(matrix_for_entropy, dtype=float)
+                            # SUM NORMALIZATION: Create probability distribution for entropy calculation
+                            # This is the correct method according to Entropy Weight Method theory
+                            n = matrix_for_entropy.shape[0]  # number of alternatives
+                            m = matrix_for_entropy.shape[1]  # number of criteria
                             
-                            for j in range(matrix_for_entropy.shape[1]):
+                            # Initialize probability matrix
+                            probability_matrix = np.zeros_like(matrix_for_entropy, dtype=float)
+                            
+                            # Sum normalization for each criterion
+                            for j in range(m):
                                 col_data = matrix_for_entropy[:, j]
-                                col_min = np.min(col_data)
-                                col_max = np.max(col_data)
+                                col_sum = np.sum(col_data)
                                 
-                                # Avoid division by zero if all values are the same
-                                if col_max - col_min > 1e-10:
-                                    normalized_matrix[:, j] = (col_data - col_min) / (col_max - col_min)
+                                # Check if column sum is zero or near-zero
+                                if col_sum < 1e-10:
+                                    st.warning(f"⚠️ All values in '{list(available_criteria.keys())[j]}' are zero or near-zero. Using equal distribution.")
+                                    probability_matrix[:, j] = 1.0 / n  # Equal probability for all alternatives
                                 else:
-                                    # If all values are the same, normalize to 0.5
-                                    normalized_matrix[:, j] = 0.5
-                                    st.warning(f"⚠️ All values in '{list(available_criteria.keys())[j]}' are identical. This criterion will have lower weight.")
-                            
-                            # Manual entropy calculation
-                            n = normalized_matrix.shape[0]  # number of alternatives
-                            m = normalized_matrix.shape[1]  # number of criteria
+                                    # Sum normalization: creates probability distribution directly
+                                    probability_matrix[:, j] = col_data / col_sum
                             
                             # Calculate entropy for each criterion
                             entropies = []
                             diversities = []
                             
                             for j in range(m):
-                                # Normalize each column to sum to 1 (probability distribution)
-                                col_sum = np.sum(normalized_matrix[:, j])
-                                if col_sum > 0:
-                                    p = normalized_matrix[:, j] / col_sum
-                                else:
-                                    p = np.ones(n) / n
+                                p = probability_matrix[:, j]
                                 
-                                # Calculate entropy
+                                # Calculate entropy using information theory formula
                                 # Add small epsilon to avoid log(0)
-                                p_safe = np.where(p > 0, p, 1e-10)
+                                p_safe = np.where(p > 1e-10, p, 1e-10)
                                 e_j = -np.sum(p_safe * np.log(p_safe)) / np.log(n)
                                 
-                                # Calculate diversity (1 - entropy)
+                                # Calculate diversity (degree of differentiation)
                                 d_j = 1 - e_j
                                 
                                 entropies.append(e_j)
@@ -816,14 +807,16 @@ def main():
                             
                             # Calculate weights from diversities
                             diversity_sum = np.sum(diversities)
-                            if diversity_sum > 0:
+                            if diversity_sum > 1e-10:
                                 weights = diversities / diversity_sum
                             else:
+                                # All criteria have zero diversity (all alternatives are identical)
+                                st.warning("⚠️ All criteria have identical values across alternatives. Using equal weights.")
                                 weights = np.ones(m) / m
                             
                             # Validate the calculated weights
                             if weights is None or np.isnan(weights).any() or np.isinf(weights).any():
-                                st.error("❌ Entropy weighting failed: Insufficient data diversity.")
+                                st.error("❌ Entropy weighting failed: Invalid weight values calculated.")
                                 st.info("💡 This often happens with small datasets (<30 samples) or when criteria have very similar values.")
                                 st.info("🔄 Falling back to equal weights for all criteria.")
                                 weights = np.ones(len(available_criteria)) / len(available_criteria)
@@ -839,12 +832,13 @@ def main():
                                     st.info("💡 Consider using Manual Weights to emphasize specific criteria based on your domain knowledge.")
                                 else:
                                     st.success("✅ Entropy weights calculated successfully")
-                                
+                                    
                     except Exception as e:
                         st.error(f"❌ Error calculating entropy weights: {str(e)}")
                         st.info("🔄 Falling back to equal weights for all criteria.")
                         weights = np.ones(len(available_criteria)) / len(available_criteria)
                         st.success(f"✅ Using equal weights: {1/len(available_criteria):.2%} for each criterion")
+
                 else:
                     st.markdown("**📊 Criteria Weights** - Assign importance (0–5 scale):")
                     
@@ -854,45 +848,32 @@ def main():
                     
                     # PRESET WEIGHT TEMPLATES
                     st.markdown("##### Quick Presets")
-                    preset_cols = st.columns(4)
+                    preset_cols = st.columns(3)
                     
                     with preset_cols[0]:
-                        if st.button("⚖️ Balanced", key="preset_balanced", help="Equal importance for all criteria"):
+                        if st.button("Balanced", key="preset_balanced", help="Equal importance for all criteria"):
                             st.session_state.preset_weights = {col: 3 for col in available_criteria.keys()}
                             st.rerun()
                     
                     with preset_cols[1]:
-                        if st.button("🌱 Environmental", key="preset_environmental", help="Focus on sustainability (ESG, CO2, water, energy)"):
+                        if st.button("Long-term goal", key="preset_long_term", help="Focus on sustainability (ESG, reserves,toxicity, companionality)"):
                             st.session_state.preset_weights = {}
                             for col in available_criteria.keys():
-                                if col in ['ESG Score', 'CO2 footprint max (kg/kg)', 'Water usage max (l/kg)', 
-                                        'Embodied energy max (MJ/kg)', 'Toxicity']:
+                                if col in ['ESG Score', 'Toxicity', 'Companionality', 'Reserve (ton)']:
                                     st.session_state.preset_weights[col] = 5
                                 else:
-                                    st.session_state.preset_weights[col] = 2
+                                    st.session_state.preset_weights[col] = 1
                             st.rerun()
                     
                     with preset_cols[2]:
-                        if st.button("💰 Economic", key="preset_economic", help="Focus on availability (reserves, production, HHI)"):
+                        if st.button("Short-term goal", key="preset_short_term", help="Focus on availability (production, HHI, CO2 footprint, energy, water)"):
                             st.session_state.preset_weights = {}
                             for col in available_criteria.keys():
-                                if col in ['Reserve (ton)', 'Production (ton)', 'HHI (USGS)']:
+                                if col in ['Production (ton)', 'HHI (USGS)', 'CO2 footprint max (kg/kg)', 'Water usage max (l/kg)', 'Energy usage max (MJ/kg)']:
                                     st.session_state.preset_weights[col] = 5
                                 else:
-                                    st.session_state.preset_weights[col] = 2
+                                    st.session_state.preset_weights[col] = 1
                             st.rerun()
-                    
-                    with preset_cols[3]:
-                        if st.button("🏭 Supply Chain", key="preset_supply", help="Focus on supply security (HHI, companionality, reserves)"):
-                            st.session_state.preset_weights = {}
-                            for col in available_criteria.keys():
-                                if col in ['HHI (USGS)', 'Companionality', 'Reserve (ton)', 'Production (ton)']:
-                                    st.session_state.preset_weights[col] = 5
-                                else:
-                                    st.session_state.preset_weights[col] = 2
-                            st.rerun()
-                    
-                    st.markdown("---")
                     
                     # MANUAL WEIGHT SLIDERS - Arranged in 2 rows
                     st.markdown("##### Adjust Individual Weights")
@@ -938,17 +919,6 @@ def main():
                         weights = np.ones(len(weights)) / len(weights)
                     else:
                         weights = np.array(weights) / sum(weights)
-                    
-                    # Show normalized weight distribution
-                    with st.expander("📊 View Normalized Weights", expanded=False):
-                        weight_dist = pd.DataFrame({
-                            'Criterion': list(available_criteria.keys()),
-                            'Raw Weight': [st.session_state.get(f"weight_custom_{col}", st.session_state.preset_weights.get(col, 3)) 
-                                        for col in available_criteria.keys()],
-                            'Normalized Weight': weights,
-                            'Percentage': [f"{w*100:.1f}%" for w in weights]
-                        })
-                        st.dataframe(weight_dist, use_container_width=True)
                 
                 # Display weights
                 weights_df = pd.DataFrame({
@@ -1108,5 +1078,4 @@ def main():
                     )
 
 if __name__ == "__main__":
-
     main()
