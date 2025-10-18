@@ -11,7 +11,7 @@ mcdm==1.4                    # Requires numpy<2.0.0
 numba==0.61.0                # Requires numpy<2.2.0
 
 # Visualization/UI
-streamlit==1.44.1
+streamlit
 streamlit-bokeh
 streamlit_material==0.1.2
 
@@ -21,4 +21,5 @@ pillow==11.1.0
 
 # Chemistry data package
 mendeleev==0.12.1  # Periodic table data for chemical validation
+
 
