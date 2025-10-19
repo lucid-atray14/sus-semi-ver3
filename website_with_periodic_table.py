@@ -856,7 +856,7 @@ def main():
                             st.rerun()
                     
                     with preset_cols[1]:
-                        if st.button("Long-term goal", key="preset_long_term", help="Focus on sustainability (ESG, reserves,toxicity, companionality)"):
+                        if st.button("Long-term goal", key="preset_long_term", help="Focus on sustainability (ESG, reserves, toxicity, companionality)"):
                             st.session_state.preset_weights = {}
                             for col in available_criteria.keys():
                                 if col in ['ESG Score', 'Toxicity', 'Companionality', 'Reserve (ton)']:
@@ -1079,3 +1079,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
