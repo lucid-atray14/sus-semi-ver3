@@ -869,7 +869,7 @@ def main():
                         if st.button("Short-term goal", key="preset_short_term", help="Focus on availability (production, HHI, CO2 footprint, energy, water)"):
                             st.session_state.preset_weights = {}
                             for col in available_criteria.keys():
-                                if col in ['Production (ton)', 'HHI (USGS)', 'CO2 footprint max (kg/kg)', 'Water usage max (l/kg)', 'Energy usage max (MJ/kg)']:
+                                if col in ['Production (ton)', 'HHI (USGS)', 'CO2 footprint max (kg/kg)', 'Water usage max (l/kg)', 'Embodied energy max (MJ/kg)']:
                                     st.session_state.preset_weights[col] = 5
                                 else:
                                     st.session_state.preset_weights[col] = 1
@@ -1079,4 +1079,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
